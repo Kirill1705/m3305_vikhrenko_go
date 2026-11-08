@@ -25,4 +25,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS trips_active_driver_uniq ON trips (driver_id)
     WHERE status = 'active';
 
 -- +goose Down
-DROP TABLE IF NOT EXISTS trips;
+DROP TABLE IF EXISTS trips;

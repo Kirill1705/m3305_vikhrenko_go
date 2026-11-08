@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS trip_idempotency_keys (
 
 
 -- +goose Down
-DROP TABLE IF NOT EXISTS trip_idempotency_keys;
+DROP TABLE IF EXISTS trip_idempotency_keys;

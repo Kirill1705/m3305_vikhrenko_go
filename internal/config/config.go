@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +13,9 @@ import (
 )
 
 type Config struct {
+	ServiceName           string
+	OTLPEndpoint          string
+	OTLPProtocol          string
 	HTTPAddr              string
 	HTTPReadTimeout       time.Duration
 	HTTPReadHeaderTimeout time.Duration
@@ -96,7 +101,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if minConns > maxConns {
+	if maxConns < 1 || maxConns > math.MaxInt32 {
+		return Config{}, fmt.Errorf("DATABASE_MAX_CONNS is outside int32 range")
+	}
+	if minConns < 0 || minConns > math.MaxInt32 || minConns > maxConns {
 		return Config{}, fmt.Errorf("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 	}
 	cfg.DatabaseMaxConns = int32(maxConns)
@@ -106,6 +114,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	if err := cfg.loadTelemetry(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -145,4 +156,34 @@ func integer(name string, bits int, minimum int64) (int64, error) {
 		return 0, fmt.Errorf("%s must be at least %d", name, minimum)
 	}
 	return number, nil
+}
+
+func (cfg *Config) loadTelemetry() error {
+	var err error
+	cfg.ServiceName, err = required("OTEL_SERVICE_NAME")
+	if err != nil {
+		return err
+	}
+	cfg.OTLPEndpoint, err = required("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if err != nil {
+		return err
+	}
+	endpoint, err := url.ParseRequestURI(cfg.OTLPEndpoint)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return fmt.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP or HTTPS URL")
+	}
+	cfg.OTLPProtocol, err = required("OTEL_EXPORTER_OTLP_PROTOCOL")
+	if err != nil {
+		return err
+	}
+	if cfg.OTLPProtocol != "grpc" && cfg.OTLPProtocol != "http/protobuf" {
+		return fmt.Errorf("OTEL_EXPORTER_OTLP_PROTOCOL must be grpc or http/protobuf")
+	}
+	if _, err := required("OTEL_RESOURCE_ATTRIBUTES"); err != nil {
+		return err
+	}
+	if _, err := required("OTEL_TRACES_SAMPLER"); err != nil {
+		return err
+	}
+	return nil
 }

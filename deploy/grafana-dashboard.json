@@ -1,0 +1,306 @@
+{
+  "uid": "tripgo-lab2",
+  "title": "TripGo — ЛР2: HTTP, PostgreSQL и поездки",
+  "tags": [
+    "tripgo",
+    "lab2"
+  ],
+  "schemaVersion": 39,
+  "version": 0,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Поездки со старта сервиса",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(tripgo_trips_created_total{exported_job=\"tripgo/trip-service\"})",
+          "legendFormat": "Созданы",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "sum(tripgo_trips_completed_total{exported_job=\"tripgo/trip-service\"})",
+          "legendFormat": "Завершены",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "sum(tripgo_trips_active{exported_job=\"tripgo/trip-service\"})",
+          "legendFormat": "Активны",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Число обработанных HTTP-запросов",
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s]))",
+          "legendFormat": "RPS",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "title": "HTTP API: RPS · окно 5 секунд",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Ответы 2xx / все ответы API поездок за последние 5 секунд.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 99.9
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "100 * (sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\",http_response_status_code=~\"2..\"}[5s])) or (0 * sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])))) / (sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])) > 0)",
+          "legendFormat": "Ответы 2xx",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "title": "HTTP API: ответы 2xx · окно 5 секунд · цель 99,9%",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Оценка p95 и p99 времени обработки API-запросов по гистограмме.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])))",
+          "legendFormat": "p95",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])))",
+          "legendFormat": "p99",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "title": "HTTP API: latency p95 / p99 · окно 5 секунд",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Ответы 2xx не дольше 800 мс / все ответы API поездок",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "100 * (sum(rate(http_server_request_duration_seconds_bucket{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\",http_response_status_code=~\"2..\",le=\"0.8\"}[5s])) or (0 * sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])))) / (sum(rate(http_server_request_duration_seconds_count{exported_job=\"tripgo/trip-service\",http_route=~\"/api/v1/trips(/.*)?\"}[5s])) > 0)",
+          "legendFormat": "Ответы 2xx ≤ 800 мс",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "title": "HTTP API: ответы 2xx ≤ 800 мс · окно 5 секунд · цель 99%",
+      "type": "timeseries"
+    },
+    {
+      "id": 4,
+      "title": "PostgreSQL: среднее latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (db_collection_name,db_operation_name) (db_client_operation_duration_seconds_sum{exported_job=\"tripgo/trip-service\"}) / sum by (db_collection_name,db_operation_name) (db_client_operation_duration_seconds_count{exported_job=\"tripgo/trip-service\"})",
+          "legendFormat": "{{db_collection_name}} · {{db_operation_name}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

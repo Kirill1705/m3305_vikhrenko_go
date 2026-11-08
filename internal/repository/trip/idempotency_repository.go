@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Kirill1705/m3305_vikhrenko_go/internal/database"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	domain "github.com/Kirill1705/m3305_vikhrenko_go/internal/domain/trip"
+	"github.com/Kirill1705/m3305_vikhrenko_go/internal/infra/postgres/transaction"
 )
 
 func (repository *Repository) ClaimIdempotency(ctx context.Context, key uuid.UUID, requestHash []byte, ttl time.Duration) ([]byte, bool, error) {
-	executor := database.FromContext(ctx)
+	executor := transaction.FromContext(ctx)
 	if executor == nil {
 		return nil, false, errors.New("claim idempotency key requires a transaction")
 	}
@@ -41,12 +43,13 @@ func (repository *Repository) ClaimIdempotency(ctx context.Context, key uuid.UUI
 	if err != nil {
 		return nil, false, fmt.Errorf("build read idempotency query: %w", err)
 	}
-	var storedHash, response []byte
+	var storedHash []byte
+	var response []byte
 	if err := executor.QueryRow(ctx, query, args...).Scan(&storedHash, &response); err != nil {
 		return nil, false, fmt.Errorf("read idempotency response: %w", err)
 	}
 	if !bytes.Equal(storedHash, requestHash) {
-		return nil, false, ErrIdempotencyConflict
+		return nil, false, domain.ErrIdempotencyConflict
 	}
 	if len(response) == 0 {
 		return nil, false, errors.New("idempotency response is missing")
@@ -55,7 +58,7 @@ func (repository *Repository) ClaimIdempotency(ctx context.Context, key uuid.UUI
 }
 
 func (repository *Repository) SaveIdempotencyResponse(ctx context.Context, key uuid.UUID, response []byte, ttl time.Duration) error {
-	executor := database.FromContext(ctx)
+	executor := transaction.FromContext(ctx)
 	if executor == nil {
 		return errors.New("save idempotency response requires a transaction")
 	}

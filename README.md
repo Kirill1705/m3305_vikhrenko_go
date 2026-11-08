@@ -1,3 +1,100 @@
+# TripGo — лабораторная работа 2
+
+Архитектура, тесты, линтер и OpenTelemetry для сервиса поездок.
+
+## Архитектура
+
+Зависимости направлены внутрь: HTTP → usecase → домен. Домен не импортирует
+HTTP, SQL и OTel; содержит модель поездки, валидацию, ошибки и переход `Finish`.
+Usecase выполняет сценарий через интерфейсы, реализации передаются в конструктор.
+
+| Слой | Пакет | Назначение |
+|---|---|---|
+| Домен | `internal/domain/trip` | Модель и бизнес-правила |
+| Usecase | `internal/usecase/trip/{create,get,finish}` | Сценарии операций |
+| HTTP | `internal/http` | Обработчики, преобразование DTO, middleware и ответы |
+| Репозитории | `internal/repository/trip` | SQL поездок |
+| Инфраструктура | `internal/infra/{postgres,telemetry}` | Пул, транзакции, OTel и slog |
+| Контейнер | `internal/container` | Сборка зависимостей и жизненный цикл |
+
+Узкие неэкспортируемые интерфейсы объявлены в `contract.go` пакетов-потребителей:
+HTTP задаёт контракт usecase, usecase — контракты репозитория, транзакций и событий.
+Так потребитель определяет нужные ему методы и не зависит от конкретной реализации.
+Моки генерируются в `mocks_test.go`.
+
+Generated DTO преобразуются в доменные модели на границе HTTP. Доменные ошибки
+переводятся в `Problem` в одном месте — `internal/http/domainerror`.
+`container.New` создаёт и связывает зависимости; `main` читает конфигурацию,
+готовит отмену по сигналам и запускает приложение. Границы импортов проверяет
+`depguard` из `.golangci.yml`.
+
+Пути `api/` и `cmd/trip-service/` сохранены с ЛР1 для совместимости.
+
+## Проверки
+
+Дополнительно нужен `golangci-lint 2.15.0`:
+
+```sh
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+```
+
+```sh
+make generate
+make test
+make test-integration
+make lint
+```
+
+`make generate` обновляет OpenAPI-код и моки. `make test` запускает unit-тесты
+с `-race -count=2` и печатает суммарное покрытие `internal/domain` и
+`internal/usecase`; требование — не ниже 50%. Проверяются домен, usecase
+с gomock, маппинг ошибок и HTTP-обработчики через `httptest`.
+
+`make test-integration` запускает тесты с тегом `integration`, `-race -count=2`
+и использует PostgreSQL из `DATABASE_URL`: создаёт отдельную схему, применяет
+миграции и удаляет данные после проверки. Проверяются репозиторий и атомарный откат.
+
+## Окружение и телеметрия
+
+Базовые требования и установка `tripgoctl` описаны в разделе ЛР1 ниже.
+`environment.toml` выбирает окружение ЛР2 с PostgreSQL и observability:
+
+```sh
+tripgoctl cluster start
+tripgoctl environment start
+tripgoctl connect
+docker exec -i tripgo-local-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - < deploy/prometheus-config.yaml
+docker exec tripgo-local-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf -n tripgo-lab-02 rollout restart deployment/prometheus
+make migrate
+make run
+```
+
+Дополнительные переменные для телеметрии:
+
+| Переменная | Значение примера |
+|---|---|
+| `OTEL_SERVICE_NAME` | `trip-service` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Адрес коллектора из `.env`, выдаваемого `tripgoctl connect` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf`; также поддерживается `grpc` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=tripgo,deployment.environment=local` |
+| `OTEL_TRACES_SAMPLER` | `parentbased_always_on` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `1000` мс |
+
+Экспорт метрик и трейсов — по OTLP. HTTP-инструментирование использует OTel SDK,
+SQL — `otelpgx` на уровне пула. Логи `slog` выводятся в stdout как JSON
+с `trace_id` и `span_id`.
+
+В Jaeger выберите `trip-service` и откройте HTTP-трейс с дочерними SQL-спанами.
+В Grafana импортируйте [дашборд TripGo](deploy/grafana-dashboard.json).
+Панели API показывают RPS, latency p95/p99, долю ответов 2xx и долю ответов 2xx
+не дольше 800 мс за последние 5 секунд.
+Сбор Prometheus и экспорт сервиса настроены на 1 секунду.
+
+Скриншоты проверки: [метрики Grafana](docs/screenshots/lab2-grafana.png)
+и [HTTP-трейс с SQL-спанами в Jaeger](docs/screenshots/lab2-jaeger.png).
+
+---
+
 # TripGo — лабораторная работа 1
 
 HTTP-сервис поездок. Реализована основная часть и оба бонуса

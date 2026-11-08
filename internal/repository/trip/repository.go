@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Kirill1705/m3305_vikhrenko_go/api"
-	"github.com/Kirill1705/m3305_vikhrenko_go/internal/database"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	domain "github.com/Kirill1705/m3305_vikhrenko_go/internal/domain/trip"
+	"github.com/Kirill1705/m3305_vikhrenko_go/internal/infra/postgres/transaction"
 )
 
 type Repository struct {
@@ -24,14 +25,14 @@ func NewRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *Repository {
 	return &Repository{pool: pool, queryTimeout: queryTimeout}
 }
 
-func (repository *Repository) executor(ctx context.Context) database.DBTX {
-	if tx := database.FromContext(ctx); tx != nil {
+func (repository *Repository) executor(ctx context.Context) transaction.DBTX {
+	if tx := transaction.FromContext(ctx); tx != nil {
 		return tx
 	}
 	return repository.pool
 }
 
-func (repository *Repository) Insert(ctx context.Context, trip api.Trip) error {
+func (repository *Repository) Insert(ctx context.Context, trip domain.Trip) error {
 	query, args, err := sq.Insert("trips").
 		Columns("id", "user_id", "driver_id", "start_latitude", "start_longitude",
 			"end_latitude", "end_longitude", "price", "status", "started_at", "created_at", "updated_at").
@@ -47,25 +48,25 @@ func (repository *Repository) Insert(ctx context.Context, trip api.Trip) error {
 	if _, err := repository.executor(ctx).Exec(ctx, query, args...); err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.ConstraintName == "trips_active_driver_uniq" {
-			return ErrDriverBusy
+			return domain.ErrDriverBusy
 		}
 		return fmt.Errorf("insert trip: %w", err)
 	}
 	return nil
 }
 
-func (repository *Repository) Get(ctx context.Context, id uuid.UUID) (api.Trip, error) {
+func (repository *Repository) Get(ctx context.Context, id uuid.UUID) (domain.Trip, error) {
 	return repository.get(ctx, id, false)
 }
 
-func (repository *Repository) GetForUpdate(ctx context.Context, id uuid.UUID) (api.Trip, error) {
-	if database.FromContext(ctx) == nil {
-		return api.Trip{}, errors.New("get trip for update requires a transaction")
+func (repository *Repository) GetForUpdate(ctx context.Context, id uuid.UUID) (domain.Trip, error) {
+	if transaction.FromContext(ctx) == nil {
+		return domain.Trip{}, errors.New("get trip for update requires a transaction")
 	}
 	return repository.get(ctx, id, true)
 }
 
-func (repository *Repository) get(ctx context.Context, id uuid.UUID, forUpdate bool) (api.Trip, error) {
+func (repository *Repository) get(ctx context.Context, id uuid.UUID, forUpdate bool) (domain.Trip, error) {
 	query := sq.Select("id", "user_id", "driver_id", "start_latitude", "start_longitude",
 		"end_latitude", "end_longitude", "price", "status", "started_at", "finished_at").
 		From("trips").Where(sq.Eq{"id": id}).PlaceholderFormat(sq.Dollar)
@@ -74,11 +75,11 @@ func (repository *Repository) get(ctx context.Context, id uuid.UUID, forUpdate b
 	}
 	sql, args, err := query.ToSql()
 	if err != nil {
-		return api.Trip{}, fmt.Errorf("build select trip query: %w", err)
+		return domain.Trip{}, fmt.Errorf("build select trip query: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, repository.queryTimeout)
 	defer cancel()
-	var trip api.Trip
+	var trip domain.Trip
 	var finishedAt *time.Time
 	err = repository.executor(ctx).QueryRow(ctx, sql, args...).Scan(
 		&trip.Id, &trip.UserId, &trip.DriverId,
@@ -87,26 +88,25 @@ func (repository *Repository) get(ctx context.Context, id uuid.UUID, forUpdate b
 		&trip.Price, &trip.Status, &trip.StartedAt, &finishedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return api.Trip{}, ErrTripNotFound
+		return domain.Trip{}, domain.ErrTripNotFound
 	}
 	if err != nil {
-		return api.Trip{}, fmt.Errorf("select trip: %w", err)
+		return domain.Trip{}, fmt.Errorf("select trip: %w", err)
 	}
 	trip.StartedAt = trip.StartedAt.UTC()
-	trip.FinishedAt.SetNull()
 	if finishedAt != nil {
-		trip.FinishedAt.Set(finishedAt.UTC())
+		finished := finishedAt.UTC()
+		trip.FinishedAt = &finished
 	}
-	trip.LastPositionAt.SetNull()
 	return trip, nil
 }
 
 func (repository *Repository) Complete(ctx context.Context, id uuid.UUID, finishedAt time.Time) error {
 	query, args, err := sq.Update("trips").
-		Set("status", api.TripStatus("completed")).
+		Set("status", domain.StatusCompleted).
 		Set("finished_at", finishedAt).
 		Set("updated_at", finishedAt).
-		Where(sq.Eq{"id": id, "status": "active"}).
+		Where(sq.Eq{"id": id, "status": domain.StatusActive}).
 		PlaceholderFormat(sq.Dollar).ToSql()
 	if err != nil {
 		return fmt.Errorf("build complete trip query: %w", err)
@@ -121,12 +121,12 @@ func (repository *Repository) Complete(ctx context.Context, id uuid.UUID, finish
 		if _, err := repository.Get(ctx, id); err != nil {
 			return err
 		}
-		return ErrTripCompleted
+		return domain.ErrTripCompleted
 	}
 	return nil
 }
 
-func (repository *Repository) AddStatusChange(ctx context.Context, id uuid.UUID, from *api.TripStatus, to api.TripStatus, reason string, changedAt time.Time) error {
+func (repository *Repository) AddStatusChange(ctx context.Context, id uuid.UUID, from *domain.Status, to domain.Status, reason string, changedAt time.Time) error {
 	query, args, err := sq.Insert("trip_status_history").
 		Columns("trip_id", "from_status", "to_status", "reason", "changed_at").
 		Values(id, from, to, reason, changedAt).
@@ -140,4 +140,18 @@ func (repository *Repository) AddStatusChange(ctx context.Context, id uuid.UUID,
 		return fmt.Errorf("insert trip status history: %w", err)
 	}
 	return nil
+}
+
+func (repository *Repository) CountActive(ctx context.Context) (int64, error) {
+	query, args, err := sq.Select("COUNT(*)").From("trips").Where(sq.Eq{"status": domain.StatusActive}).PlaceholderFormat(sq.Dollar).ToSql()
+	if err != nil {
+		return 0, fmt.Errorf("build active trip count: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, repository.queryTimeout)
+	defer cancel()
+	var count int64
+	if err := repository.pool.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active trips: %w", err)
+	}
+	return count, nil
 }
